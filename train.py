@@ -1,5 +1,7 @@
 import torch
 from torch.utils.data import DataLoader
+from dataset import ShogiDataset
+from architecture import ShogiCNN
 
 # 既に作成した Dataset クラス
 dataset = ShogiDataset(folder_path='path/to/csa_files')
@@ -17,7 +19,7 @@ criterion = torch.nn.CrossEntropyLoss()
 optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
 
 # エポック数
-num_epochs = 10
+num_epochs = 2
 
 for epoch in range(num_epochs):
     total_loss = 0.0
@@ -28,10 +30,7 @@ for epoch in range(num_epochs):
         inputs = inputs.to(device)
         labels = labels.to(device)
 
-        # 順伝播
         outputs = model(inputs)
-
-        # 損失計算
         loss = criterion(outputs, labels)
 
         # 逆伝播とパラメータ更新
@@ -39,7 +38,6 @@ for epoch in range(num_epochs):
         loss.backward()
         optimizer.step()
 
-        # ロス積算
         total_loss += loss.item()
 
         # 精度計算
