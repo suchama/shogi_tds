@@ -5,7 +5,7 @@ from torch.utils.data import Dataset, DataLoader
 import numpy as np
 
 
-#ファイルを開く。一局文の棋譜がlinesというリストで取得できる。
+#ファイルを開く。 一局文の棋譜がlinesというリストで取得できる。
 file_path = ""
 with open(file_path, "r", encodeing="utf-8") as f:
     lines = f.readlines()
