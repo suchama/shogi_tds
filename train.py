@@ -2,6 +2,7 @@ import torch
 from torch.utils.data import DataLoader
 
 # 既に作成した Dataset クラス
+#test
 dataset = ShogiDataset(folder_path='path/to/csa_files')
 dataloader = DataLoader(dataset, batch_size=32, shuffle=True)
 
