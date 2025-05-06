@@ -1,105 +1,97 @@
-import os
+import os 
+import glob
 import torch
+from torch.utils.data import Dataset, DataLoader
 import numpy as np
-import shogi
-import shogi.CSA
-from torch.utils.data import Dataset
-from gamestate import GameState
 
-def move_to_xy(move_str):
-    if "*" in move_str:  # 打ち駒
-        to_x = 9 - int(move_str[2])
-        to_y = ord(move_str[3]) - ord('a')
-        return None, (to_x, to_y)
-    else:  # 通常の移動
-        from_x = 9 - int(move_str[0])
-        from_y = ord(move_str[1]) - ord('a')
-        to_x = 9 - int(move_str[2])
-        to_y = ord(move_str[3]) - ord('a')
-        return (from_x, from_y), (to_x, to_y)
 
-def move_to_class_id(move_str):
-    (from_pos, to_pos) = move_to_xy(move_str)
-    to_x, to_y = to_pos
-    if from_pos is None:
-        from_x, from_y = 0, 0  # 打ち駒用の仮位置（分類用に固定）
-    else:
-        from_x, from_y = from_pos
-    return (from_y * 9 + from_x) * 81 + (to_y * 9 + to_x)
+#ファイルを開くfoo 一局文の棋譜がlinesというリストで取得できる。
+file_path = ""
+with open(file_path, "r", encodeing="utf-8") as f:
+    lines = f.readlines()
 
-def state_to_tensor(grid, hands, turn):
+#棋譜読み込み関数
+def load_csa_files(folder_path):
+    file_list = glob.glob(f"{folder_path}/*.csa")
+    games = []
+
+    for file_path in file_list:
+        with open(file_path, "r", encoding="utf-8") as f:
+            lines = f.readlines()
+    
+        moves = extract_moves_from_csa(lines)
+        parsed_moves = [parse_move(line) for line in moves]
+        games.append(parsed_moves)
+    
+    return games
+
+def board_to_tensor(board):
     tensor = np.zeros((40, 9, 9), dtype=np.float32)
+
     for y in range(9):
         for x in range(9):
-            piece = grid[y][x]
-            if piece > 0:
-                tensor[piece, y, x] = 1
-    tensor[39, :, :] = turn / 2  # 手番チャネル
-    return torch.tensor(tensor)
+            piece = board[y][x]
+            if piece != 0:
+                if piece < 10:
+                    tensor[piece - 1, y, x] = 1
+                else:
+                    tensor[piece - 11 + 20, y, x] = 1
+    return tensor
 
 class ShogiDataset(Dataset):
-    def __init__(self, folder_path, max_files=None):
-        self.data = []
-        files = [f for f in os.listdir(folder_path) if f.endswith(".csa")]
-        if max_files:
-            files = files[:max_files]
+    def __init__(self, folder_path):
+        self.games = load_csa_files(folder_path)
+        self.samples = self.prepare_samples()
 
-        for file in files:
-            try:
-                path = os.path.join(folder_path, file)
-                records = shogi.CSA.Parser.parse_file(path)[0]
-                moves = records['moves']
-            except Exception as e:
-                print(f"スキップ: {file} → {e}")
-                continue
+    def prepare_samples(self):
+        samples = []
+        for game in self.games:
+            board = self.init_board()
 
-            gs = GameState()
+            for move in game:
+                input_tensor = board_to_tensor(board)
+                label = self.encode_move(move)
 
-            for move in moves:
-                try:
-                    x_tensor = state_to_tensor(gs.board.grid, gs.hands, gs.current_turn)
-                    y_label = move_to_class_id(move)
-                    self.data.append((x_tensor, y_label))
+                samples.append((input_tensor, label))
 
-                    from_pos, to_pos = move_to_xy(move)
+                # 盤面更新（簡易実装）
+                from_x, from_y = move['from']
+                to_x, to_y = move['to']
+                piece = move['piece']
+                board[to_y][to_x] = piece
+                board[from_y][from_x] = 0
 
-                    if from_pos is None:
-                        # 打ち駒処理
-                        piece_symbol = move[0]  # 例: "P"
-                        to_x, to_y = to_pos
+        return samples
 
-                        symbol_to_code = {"P": 8, "L": 7, "N": 6, "S": 5, "G": 4, "B": 3, "R": 2}
-                        piece_code = symbol_to_code.get(piece_symbol.upper(), None)
-                        if piece_code is None:
-                            raise ValueError(f"未知の駒: {piece_symbol}")
+    def init_board(self):
+        # 初期盤面セット
+        # P1〜P9 行を処理しても良いし、固定で初期化しても良い
+        board = np.zeros((9, 9), dtype=int)
+        # 簡単のため、固定初期配置を書く（実際はファイルから読んでもOK）
+        # ここは必要に応じて完成させましょう！
+        return board
 
-                        # 持ち駒がない、空いていない、二歩などで失敗する場合も強制的に反映
-                        success = gs.drop_from_hand(piece_code, to_x, to_y)
-                        if not success:
-                            # 強制適用（注意：正しくない可能性もある）
-                            gs.board.grid[to_y][to_x] = piece_code if gs.current_turn == 1 else piece_code + 10
-                            gs.hands[gs.current_turn][piece_code] = gs.hands[gs.current_turn].get(piece_code, 1) - 1
-                            if gs.hands[gs.current_turn][piece_code] <= 0:
-                                del gs.hands[gs.current_turn][piece_code]
-
-                    else:
-                        fx, fy = from_pos
-                        tx, ty = to_pos
-                        piece = gs.board.grid[fy][fx]
-                        captured = gs.board.grid[ty][tx]
-                        if captured != 0:
-                            gs.add_to_hand(captured)
-                        gs.board.grid[fy][fx] = 0
-                        gs.board.grid[ty][tx] = piece
-
-                    gs.switch_turn()
-                except Exception as e:
-                    print(f"手の適用失敗: {move} → {e}")
-                    break
+    def encode_move(self, move):
+        # move をクラスラベルにエンコード
+        # たとえば from (9x9) + to (9x9) で 81x81 = 6561 クラス
+        from_x, from_y = move['from']
+        to_x, to_y = move['to']
+        label = from_y * 9 * 9 * 9 + from_x * 9 * 9 + to_y * 9 + to_x
+        return label
 
     def __len__(self):
-        return len(self.data)
+        return len(self.samples)
 
     def __getitem__(self, idx):
-        x, y = self.data[idx]
-        return x, y
+        input_tensor, label = self.samples[idx]
+        return torch.tensor(input_tensor), torch.tensor(label)
+
+
+dataset = ShogiDataset(folder_path='path/to/csa_files')
+dataloader = DataLoader(dataset, batch_size=32, shuffle=True)
+
+for inputs, labels in dataloader:
+    print(inputs.shape)  # torch.Size([32, 40, 9, 9])
+    print(labels.shape)  # torch.Size([32])
+
+
